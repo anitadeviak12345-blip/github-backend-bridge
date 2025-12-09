@@ -115,6 +115,35 @@ export const useChat = () => {
         await saveMessage(convId, 'user', userMessage.content);
       }
 
+      // Format messages with image support for vision models
+      const formattedMessages = [...messages, userMessage].map((m) => {
+        // If message has image attachments, format for vision
+        if (m.attachments && m.attachments.some(a => a.type.startsWith('image/'))) {
+          const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+          
+          if (m.content.trim()) {
+            // Remove the attachment info text from content
+            const cleanContent = m.content.replace(/\n\n\[Attachments:.*\]$/, '').trim();
+            if (cleanContent) {
+              content.push({ type: 'text', text: cleanContent });
+            }
+          }
+          
+          m.attachments.forEach(att => {
+            if (att.type.startsWith('image/')) {
+              content.push({
+                type: 'image_url',
+                image_url: { url: att.url }
+              });
+            }
+          });
+          
+          return { role: m.role, content };
+        }
+        
+        return { role: m.role, content: m.content };
+      });
+
       const response = await fetch(CHAT_URL, {
         method: "POST",
         headers: {
@@ -122,10 +151,7 @@ export const useChat = () => {
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
         body: JSON.stringify({
-          messages: [...messages, userMessage].map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
+          messages: formattedMessages,
           systemPrompt,
         }),
       });
