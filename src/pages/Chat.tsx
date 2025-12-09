@@ -145,7 +145,7 @@ const Chat = () => {
               </div>
             </div>
           ) : (
-            <div className="max-w-3xl mx-auto py-4">
+            <div className="w-full py-4">
               {messages.map((message) => (
                 <ChatMessage
                   key={message.id}
