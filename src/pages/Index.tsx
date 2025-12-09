@@ -1,229 +1,160 @@
-import { useState, useRef, useEffect } from "react";
-import { Send, Mic, Loader2, Bot, User, Sparkles } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
-
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-}
-
-const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
+import { Card } from "@/components/ui/card";
+import { Brain } from "lucide-react";
 
 const Index = () => {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { toast } = useToast();
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const sendMessage = async () => {
-    if (!input.trim() || isLoading) return;
-
-    const userMessage: Message = { role: "user", content: input.trim() };
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-    setIsLoading(true);
-
-    let assistantContent = "";
-
-    try {
-      const response = await fetch(CHAT_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
-        body: JSON.stringify({ messages: [...messages, userMessage] }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to get response");
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-
-      if (!reader) throw new Error("No response body");
-
-      // Add empty assistant message
-      setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
-
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const jsonStr = line.slice(6).trim();
-            if (jsonStr === "[DONE]") continue;
-
-            try {
-              const parsed = JSON.parse(jsonStr);
-              const content = parsed.choices?.[0]?.delta?.content;
-              if (content) {
-                assistantContent += content;
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  updated[updated.length - 1] = {
-                    role: "assistant",
-                    content: assistantContent,
-                  };
-                  return updated;
-                });
-              }
-            } catch {
-              // Ignore parse errors for incomplete chunks
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Chat error:", error);
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Something went wrong",
-        variant: "destructive",
-      });
-      // Remove empty assistant message on error
-      setMessages((prev) => prev.filter((m) => m.content !== ""));
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
+  const currentYear = new Date().getFullYear();
 
   return (
-    <div className="flex min-h-screen flex-col" style={{ background: "var(--gradient-bg)" }}>
-      {/* Header */}
-      <header className="sticky top-0 z-50 glass border-b px-4 py-3">
-        <div className="mx-auto flex max-w-4xl items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl gradient-bg shadow-lg">
-            <Sparkles className="h-5 w-5 text-primary-foreground" />
+    <div className="min-h-screen">
+      <div className="container max-w-6xl mx-auto px-6 py-7">
+        <header className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Brain className="h-8 w-8 text-primary" />
+            <div>
+              <div className="font-bold text-xl text-foreground">Luvio AI</div>
+              <div className="text-xs text-muted-foreground">AI for Everyone</div>
+            </div>
           </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">
-              <span className="gradient-text">Luvio AI</span>
-            </h1>
-            <p className="text-xs text-muted-foreground">Powered by GPT-5</p>
-          </div>
-        </div>
-      </header>
-
-      {/* Messages */}
-      <main className="flex-1 overflow-y-auto px-4 py-6">
-        <div className="mx-auto max-w-4xl space-y-6">
-          {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 text-center">
-              <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-2xl gradient-bg shadow-lg" style={{ boxShadow: "var(--shadow-glow)" }}>
-                <Bot className="h-10 w-10 text-primary-foreground" />
-              </div>
-              <h2 className="mb-2 text-2xl font-bold">Welcome to Luvio AI</h2>
-              <p className="max-w-md text-muted-foreground">
-                I'm your intelligent assistant. Ask me anything about coding, writing, research, or any topic you need help with.
-              </p>
-            </div>
-          )}
-
-          {messages.map((message, index) => (
-            <div
-              key={index}
-              className={cn(
-                "flex gap-3",
-                message.role === "user" ? "justify-end" : "justify-start"
-              )}
-            >
-              {message.role === "assistant" && (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg gradient-bg">
-                  <Bot className="h-4 w-4 text-primary-foreground" />
-                </div>
-              )}
-              <div
-                className={cn(
-                  "max-w-[80%] rounded-2xl px-4 py-3",
-                  message.role === "user"
-                    ? "gradient-bg text-primary-foreground"
-                    : "bg-card border shadow-sm"
-                )}
-                style={message.role === "user" ? { boxShadow: "var(--shadow-card)" } : {}}
-              >
-                <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                  {message.content}
-                  {message.role === "assistant" && isLoading && index === messages.length - 1 && (
-                    <span className="ml-1 inline-block h-4 w-1 animate-pulse bg-current" />
-                  )}
-                </p>
-              </div>
-              {message.role === "user" && (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-secondary">
-                  <User className="h-4 w-4 text-secondary-foreground" />
-                </div>
-              )}
-            </div>
-          ))}
-          <div ref={messagesEndRef} />
-        </div>
-      </main>
-
-      {/* Input */}
-      <footer className="sticky bottom-0 border-t glass px-4 py-4">
-        <div className="mx-auto max-w-4xl">
-          <div className="flex items-end gap-3">
-            <div className="relative flex-1">
-              <Textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Type your message..."
-                className="min-h-[52px] max-h-32 resize-none rounded-xl border-2 bg-card pr-12 text-sm focus:border-primary"
-                disabled={isLoading}
-              />
-            </div>
-            <Button
-              onClick={sendMessage}
-              disabled={!input.trim() || isLoading}
-              size="icon"
-              className="h-[52px] w-[52px] rounded-xl gradient-bg shadow-lg transition-transform hover:scale-105"
-              style={{ boxShadow: "var(--shadow-glow)" }}
-            >
-              {isLoading ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <Send className="h-5 w-5" />
-              )}
+          <div className="flex gap-3">
+            <Button variant="outline" className="border-border/50 text-muted-foreground hover:bg-muted">
+              Docs
             </Button>
+            <Link to="/auth">
+              <Button className="gradient-primary shadow-glow">Start Free</Button>
+            </Link>
           </div>
-          <p className="mt-2 text-center text-xs text-muted-foreground">
-            Luvio AI can make mistakes. Consider checking important information.
+        </header>
+
+        <main className="grid lg:grid-cols-[1fr_420px] gap-7 items-center py-12">
+          <div className="animate-fade-in">
+            <h1 className="text-4xl lg:text-5xl font-bold leading-tight text-foreground">
+              Meet Luvio — Your Personal AI Universe
+            </h1>
+            <p className="text-muted-foreground mt-3 text-lg">
+              Chat, build, and automate with 75+ modular AI tools. Multi-brain architecture: GPT-5 powered for maximum intelligence.
+            </p>
+            <div className="mt-5 flex gap-3">
+              <Link to="/auth">
+                <Button className="gradient-primary shadow-glow">Try Chat</Button>
+              </Link>
+              <Button variant="outline" className="border-border/50 text-muted-foreground hover:bg-muted">
+                API Docs
+              </Button>
+            </div>
+
+            <div className="grid sm:grid-cols-3 gap-4 mt-6">
+              <FeatureCard title="Chat & Conversation" desc="Multi-lingual, long-context support" />
+              <FeatureCard title="75+ Modules" desc="Finance, Study, Dream11, Marketing, Voice & more" />
+              <FeatureCard title="GPT-5 Powered" desc="Latest AI technology for best results" />
+            </div>
+
+            <Card className="mt-5 p-4 bg-card border-border/30">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <div className="font-bold text-foreground">Developers</div>
+                  <div className="text-sm text-muted-foreground">Simple REST API & SDKs (coming soon)</div>
+                </div>
+                <code className="bg-background/80 px-3 py-2 rounded-lg text-sm text-primary font-mono">
+                  curl -X POST /chat -H "x-api-key: YOUR_KEY"
+                </code>
+              </div>
+            </Card>
+          </div>
+
+          <aside className="animate-fade-in" style={{ animationDelay: "0.2s" }}>
+            <Card className="p-5 bg-card border-border/30">
+              <div className="font-bold text-foreground">Primary Features</div>
+              <div className="flex flex-wrap gap-3 mt-4">
+                <BrainBadge>GPT-5</BrainBadge>
+                <BrainBadge>Voice Input</BrainBadge>
+                <BrainBadge>File Upload</BrainBadge>
+              </div>
+
+              <div className="mt-5">
+                <div className="text-sm text-muted-foreground">Usecases</div>
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <UsecaseTag>Healthcare</UsecaseTag>
+                  <UsecaseTag>Finance</UsecaseTag>
+                  <UsecaseTag>Education</UsecaseTag>
+                  <UsecaseTag>Smart Cities</UsecaseTag>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <div className="font-bold text-foreground">API Preview</div>
+                <code className="block mt-2 bg-background/80 p-3 rounded-lg text-sm text-primary/80 font-mono">
+                  POST /chat<br />
+                  {"{ message }"}
+                </code>
+              </div>
+            </Card>
+          </aside>
+        </main>
+
+        <section className="mt-5">
+          <h3 className="text-2xl font-bold text-foreground">Why Luvio AI?</h3>
+          <p className="text-sm text-muted-foreground mt-2 max-w-2xl">
+            Single platform for users and developers — Chat UI for quick tasks, API for automation and integration. Modular, secure and multilingual.
           </p>
-        </div>
-      </footer>
+
+          <div className="flex flex-col md:flex-row gap-4 mt-5">
+            <PricingCard
+              title="Free"
+              desc="1000 calls / month • Basic models"
+              cta="Get Free Key"
+            />
+            <PricingCard
+              title="Developer"
+              desc="100k calls / month • Priority support"
+              cta="Get API"
+            />
+            <PricingCard
+              title="Enterprise"
+              desc="Custom • SLA • On-prem options"
+              cta="Contact Sales"
+            />
+          </div>
+        </section>
+
+        <footer className="py-7 mt-7 border-t border-border/30 flex flex-col sm:flex-row justify-between items-center gap-4">
+          <div>
+            <span className="font-bold text-foreground">Luvio AI</span>
+            <span className="text-sm text-muted-foreground ml-2">• AI for Everyone</span>
+          </div>
+          <div className="text-sm text-muted-foreground">© {currentYear} Luvio AI</div>
+        </footer>
+      </div>
     </div>
   );
 };
+
+const FeatureCard = ({ title, desc }: { title: string; desc: string }) => (
+  <Card className="p-4 bg-card/50 border-border/20 hover:border-primary/30 transition-colors">
+    <div className="font-semibold text-foreground">{title}</div>
+    <div className="text-sm text-muted-foreground mt-1">{desc}</div>
+  </Card>
+);
+
+const BrainBadge = ({ children }: { children: React.ReactNode }) => (
+  <div className="px-3 py-2 rounded-lg bg-muted border border-border/30 font-semibold text-sm text-foreground">
+    {children}
+  </div>
+);
+
+const UsecaseTag = ({ children }: { children: React.ReactNode }) => (
+  <div className="glass px-3 py-3 rounded-lg text-center text-sm text-muted-foreground border border-border/20">
+    {children}
+  </div>
+);
+
+const PricingCard = ({ title, desc, cta }: { title: string; desc: string; cta: string }) => (
+  <Card className="p-5 bg-card/80 border-border/30 flex-1 min-w-[240px]">
+    <h4 className="text-lg font-bold text-foreground">{title}</h4>
+    <div className="text-sm text-muted-foreground mt-1">{desc}</div>
+    <Button className="mt-4 w-full gradient-primary shadow-glow">{cta}</Button>
+  </Card>
+);
 
 export default Index;
