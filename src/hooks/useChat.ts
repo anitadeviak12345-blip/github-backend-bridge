@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -7,6 +7,7 @@ export type Attachment = {
   url: string;
   type: string;
   name: string;
+  base64?: string; // For sending to AI
 };
 
 export type Message = {
@@ -18,11 +19,29 @@ export type Message = {
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
 
+// Convert image URL to base64 for vision models
+const imageUrlToBase64 = async (url: string): Promise<string> => {
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (error) {
+    console.error('Error converting image to base64:', error);
+    return url; // Fallback to URL
+  }
+};
+
 export const useChat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const { user } = useAuth();
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const loadConversation = useCallback(async (convId: string) => {
     if (!user) return;
@@ -50,7 +69,6 @@ export const useChat = () => {
 
   const ensureConversation = useCallback(async (moduleId?: string, firstMessage?: string) => {
     if (!user) return null;
-
     if (conversationId) return conversationId;
 
     const title = firstMessage
@@ -90,9 +108,22 @@ export const useChat = () => {
     }
   }, []);
 
-  const sendMessage = useCallback(async (input: string, systemPrompt?: string, moduleId?: string, attachments?: Attachment[]) => {
+  const sendMessage = useCallback(async (
+    input: string, 
+    systemPrompt?: string, 
+    moduleId?: string, 
+    attachments?: Attachment[]
+  ) => {
     if ((!input.trim() && (!attachments || attachments.length === 0)) || isLoading) return;
 
+    // Cancel any ongoing request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
+    const hasImages = attachments?.some(a => a.type.startsWith('image/') || a.type === 'image');
+    
     const messageContent = attachments && attachments.length > 0
       ? `${input.trim()}\n\n[Attachments: ${attachments.map(a => a.name).join(', ')}]`
       : input.trim();
@@ -111,38 +142,40 @@ export const useChat = () => {
 
     try {
       const convId = await ensureConversation(moduleId, input.trim());
+      
+      // Save user message immediately (don't wait)
       if (convId) {
-        await saveMessage(convId, 'user', userMessage.content);
+        saveMessage(convId, 'user', userMessage.content);
       }
 
       // Format messages with image support for vision models
-      const formattedMessages = [...messages, userMessage].map((m) => {
-        // If message has image attachments, format for vision
-        if (m.attachments && m.attachments.some(a => a.type.startsWith('image/'))) {
+      const formattedMessages = await Promise.all([...messages, userMessage].map(async (m) => {
+        // If message has image attachments, format for vision with base64
+        if (m.attachments && m.attachments.some(a => a.type.startsWith('image/') || a.type === 'image')) {
           const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
           
-          if (m.content.trim()) {
-            // Remove the attachment info text from content
-            const cleanContent = m.content.replace(/\n\n\[Attachments:.*\]$/, '').trim();
-            if (cleanContent) {
-              content.push({ type: 'text', text: cleanContent });
-            }
+          // Clean content text
+          const cleanContent = m.content.replace(/\n\n\[Attachments:.*\]$/, '').trim();
+          if (cleanContent) {
+            content.push({ type: 'text', text: cleanContent });
           }
           
-          m.attachments.forEach(att => {
-            if (att.type.startsWith('image/')) {
+          // Convert images to base64 for better AI processing
+          for (const att of m.attachments) {
+            if (att.type.startsWith('image/') || att.type === 'image') {
+              const base64 = att.base64 || await imageUrlToBase64(att.url);
               content.push({
                 type: 'image_url',
-                image_url: { url: att.url }
+                image_url: { url: base64 }
               });
             }
-          });
+          }
           
           return { role: m.role, content };
         }
         
         return { role: m.role, content: m.content };
-      });
+      }));
 
       const response = await fetch(CHAT_URL, {
         method: "POST",
@@ -153,7 +186,12 @@ export const useChat = () => {
         body: JSON.stringify({
           messages: formattedMessages,
           systemPrompt,
+          moduleId,
+          userId: user?.id,
+          conversationId: convId,
+          hasImage: hasImages,
         }),
+        signal: abortControllerRef.current.signal,
       });
 
       if (!response.ok) {
@@ -176,8 +214,11 @@ export const useChat = () => {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-
       const assistantId = crypto.randomUUID();
+
+      // Optimized streaming with batched updates
+      let lastUpdateTime = 0;
+      const UPDATE_INTERVAL = 16; // ~60fps
 
       while (true) {
         const { done, value } = await reader.read();
@@ -202,15 +243,22 @@ export const useChat = () => {
             const content = parsed.choices?.[0]?.delta?.content;
             if (content) {
               assistantContent += content;
-              setMessages((prev) => {
-                const last = prev[prev.length - 1];
-                if (last?.role === "assistant" && last.id === assistantId) {
-                  return prev.map((m) =>
-                    m.id === assistantId ? { ...m, content: assistantContent } : m
-                  );
-                }
-                return [...prev, { id: assistantId, role: "assistant", content: assistantContent }];
-              });
+              
+              // Throttle UI updates for performance
+              const now = Date.now();
+              if (now - lastUpdateTime >= UPDATE_INTERVAL) {
+                lastUpdateTime = now;
+                const currentContent = assistantContent;
+                setMessages((prev) => {
+                  const last = prev[prev.length - 1];
+                  if (last?.role === "assistant" && last.id === assistantId) {
+                    return prev.map((m) =>
+                      m.id === assistantId ? { ...m, content: currentContent } : m
+                    );
+                  }
+                  return [...prev, { id: assistantId, role: "assistant", content: currentContent }];
+                });
+              }
             }
           } catch {
             buffer = line + "\n" + buffer;
@@ -219,11 +267,27 @@ export const useChat = () => {
         }
       }
 
+      // Final update with complete content
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last?.role === "assistant" && last.id === assistantId) {
+          return prev.map((m) =>
+            m.id === assistantId ? { ...m, content: assistantContent } : m
+          );
+        }
+        return [...prev, { id: assistantId, role: "assistant", content: assistantContent }];
+      });
+
+      // Save assistant message
       if (convId && assistantContent) {
-        await saveMessage(convId, 'assistant', assistantContent);
+        saveMessage(convId, 'assistant', assistantContent);
       }
 
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return; // Request was cancelled
+      }
+      
       console.error("Chat error:", error);
       toast({
         title: "Error",
@@ -232,13 +296,34 @@ export const useChat = () => {
       });
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
     }
-  }, [messages, isLoading, ensureConversation, saveMessage]);
+  }, [messages, isLoading, user, ensureConversation, saveMessage]);
 
   const clearMessages = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
     setMessages([]);
     setConversationId(null);
   }, []);
 
-  return { messages, isLoading, sendMessage, clearMessages, conversationId, loadConversation, setConversationId };
+  const stopGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsLoading(false);
+    }
+  }, []);
+
+  return { 
+    messages, 
+    isLoading, 
+    sendMessage, 
+    clearMessages, 
+    conversationId, 
+    loadConversation, 
+    setConversationId,
+    stopGeneration 
+  };
 };

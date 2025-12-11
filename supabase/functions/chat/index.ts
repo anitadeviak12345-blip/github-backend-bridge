@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,24 +7,42 @@ const corsHeaders = {
 };
 
 serve(async (req) => {
+  const startTime = Date.now();
+  
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { messages, systemPrompt } = await req.json();
+    const { messages, systemPrompt, moduleId, userId, conversationId, hasImage } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
+    // Initialize Supabase client for logging
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    
+    let supabase: ReturnType<typeof createClient> | null = null;
+    if (supabaseUrl && supabaseServiceKey && userId) {
+      supabase = createClient(supabaseUrl, supabaseServiceKey);
+    }
+
     // Default system prompt - short responses and identity
-    const defaultPrompt = `You are Luvio AI, created by Luvio. Always give SHORT, CONCISE responses - maximum 2-3 sentences unless user asks for detailed explanation. When asked who you are, say "I am Luvio AI". You can see images. Support English and Hindi. Never claim to be ChatGPT, Claude, or Gemini.`;
+    const defaultPrompt = `You are Luvio AI, an advanced AI assistant created by Luvio. Follow these rules strictly:
+
+1. IDENTITY: When asked who you are, always say "I am Luvio AI, an advanced AI assistant created by Luvio."
+2. CONCISENESS: Give SHORT, CONCISE responses - maximum 2-3 sentences unless user asks for detailed explanation.
+3. VISION: You can see and analyze images. Describe what you see when asked.
+4. LANGUAGE: Support both English and Hindi. Respond in the language the user uses.
+5. NEVER claim to be ChatGPT, Claude, Gemini, or any other AI. You are Luvio AI only.
+6. Be helpful, accurate, and friendly.`;
 
     const finalSystemPrompt = systemPrompt || defaultPrompt;
 
-    console.log("Processing chat request with messages:", messages.length, "Model: GPT-5");
+    console.log(`[Chat] Processing request - Messages: ${messages.length}, Module: ${moduleId || 'default'}, HasImage: ${hasImage}`);
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -32,7 +51,7 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "openai/gpt-5",
+        model: hasImage ? "google/gemini-2.5-flash" : "openai/gpt-5",
         messages: [
           {
             role: "system",
@@ -46,16 +65,16 @@ serve(async (req) => {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
+      console.error("[Chat] AI gateway error:", response.status, errorText);
 
       if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again later." }), {
+        return new Response(JSON.stringify({ error: "Rate limit exceeded. कृपया कुछ देर बाद try करें।" }), {
           status: 429,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "Payment required. Please add credits to continue." }), {
+        return new Response(JSON.stringify({ error: "Credits खत्म हो गए। Please add credits to continue." }), {
           status: 402,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
@@ -67,11 +86,14 @@ serve(async (req) => {
       });
     }
 
+    const responseTimeMs = Date.now() - startTime;
+    console.log(`[Chat] Success - Response time: ${responseTimeMs}ms`);
+
     return new Response(response.body, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
   } catch (error) {
-    console.error("Chat function error:", error);
+    console.error("[Chat] Function error:", error);
     return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
