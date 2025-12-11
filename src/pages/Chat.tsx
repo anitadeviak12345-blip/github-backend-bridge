@@ -1,18 +1,23 @@
 import { useRef, useEffect, useState } from "react";
 import { useChat } from "@/hooks/useChat";
 import { useConversations } from "@/hooks/useConversations";
+import { useSubscription } from "@/hooks/useSubscription";
 import ChatMessage from "@/components/ChatMessage";
 import ChatInput from "@/components/ChatInput";
 import ChatSidebar from "@/components/ChatSidebar";
+import ModuleSelector from "@/components/ModuleSelector";
+import UsageIndicator from "@/components/UsageIndicator";
+import NotificationsDropdown from "@/components/NotificationsDropdown";
 import { defaultModule, type BrainModule } from "@/config/brainModules";
-import { Trash2, Menu, Brain } from "lucide-react";
+import { Trash2, Menu, Brain, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 
 const Chat = () => {
-  const { messages, isLoading, sendMessage, clearMessages, conversationId, loadConversation, setConversationId } = useChat();
+  const { messages, isLoading, sendMessage, clearMessages, conversationId, loadConversation, setConversationId, stopGeneration } = useChat();
   const { conversations, fetchConversations, deleteConversation } = useConversations();
-  const [selectedModule] = useState<BrainModule>(defaultModule);
+  const { checkUsage, incrementUsage, canAccessModule } = useSubscription();
+  const [selectedModule, setSelectedModule] = useState<BrainModule>(defaultModule);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -27,8 +32,44 @@ const Chat = () => {
     }
   }, [conversationId, fetchConversations]);
 
-  const handleSendMessage = (input: string, attachments?: { url: string; type: string; name: string }[]) => {
+  const handleSendMessage = async (input: string, attachments?: { url: string; type: string; name: string }[]) => {
+    // Check usage limits before sending
+    const usage = await checkUsage();
+    if (!usage.allowed) {
+      toast({
+        title: "Daily limit reached",
+        description: "आपकी daily limit खत्म हो गई। Please upgrade your plan.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Check module access
+    if (!canAccessModule(selectedModule.id)) {
+      toast({
+        title: "Module locked",
+        description: "This module is not available in your plan. Please upgrade.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const hasImage = attachments?.some(a => a.type.startsWith('image/') || a.type === 'image');
+    
+    // Increment usage
+    await incrementUsage(selectedModule.id, hasImage);
+    
     sendMessage(input, selectedModule.systemPrompt, selectedModule.id, attachments);
+  };
+
+  const handleSelectModule = (module: BrainModule) => {
+    if (canAccessModule(module.id)) {
+      setSelectedModule(module);
+      toast({
+        title: `${module.name} activated`,
+        description: module.nameHi || module.description,
+      });
+    }
   };
 
   const handleSelectConversation = (id: string) => {
@@ -90,7 +131,7 @@ const Chat = () => {
 
       <div className="flex-1 flex flex-col h-full min-w-0">
         <div className="px-4 lg:px-8 py-3 border-b border-border bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5">
-          <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
+          <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <Button
                 variant="ghost"
@@ -103,22 +144,41 @@ const Chat = () => {
               <div className="w-10 h-10 rounded-full gradient-primary flex items-center justify-center">
                 <Brain className="w-5 h-5 text-primary-foreground" />
               </div>
-              <div>
+              <div className="hidden sm:block">
                 <h1 className="font-semibold text-foreground">Luvio AI</h1>
                 <p className="text-xs text-muted-foreground">GPT-5 Powered • 112 Modules</p>
               </div>
+              <ModuleSelector 
+                selectedModule={selectedModule} 
+                onSelectModule={handleSelectModule} 
+              />
             </div>
-            {messages.length > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleNewChat}
-                className="text-muted-foreground hover:text-destructive"
-              >
-                <Trash2 className="w-4 h-4 mr-1" />
-                Clear
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              <UsageIndicator />
+              <NotificationsDropdown />
+              {isLoading && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={stopGeneration}
+                  className="text-destructive border-destructive/50 hover:bg-destructive/10"
+                >
+                  <Square className="w-3 h-3 mr-1 fill-current" />
+                  Stop
+                </Button>
+              )}
+              {messages.length > 0 && !isLoading && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleNewChat}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="w-4 h-4 mr-1" />
+                  Clear
+                </Button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -135,6 +195,9 @@ const Chat = () => {
               <p className="text-muted-foreground max-w-md mt-2">
                 आपका personal AI assistant - GPT-5 powered with 112+ specialized modules for every need.
               </p>
+              <div className="mt-4 text-xs text-muted-foreground">
+                Current Module: <span className="text-primary font-medium">{selectedModule.name}</span>
+              </div>
               <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-muted-foreground">
                 <span className="bg-primary/10 px-3 py-1.5 rounded-full">🏏 Dream11 Teams</span>
                 <span className="bg-primary/10 px-3 py-1.5 rounded-full">🌾 Agriculture</span>
@@ -177,9 +240,7 @@ const Chat = () => {
         </div>
 
         <div className="p-4 lg:px-8 border-t border-border bg-background/50 backdrop-blur-sm">
-          <div className="max-w-3xl mx-auto">
-            <ChatInput onSend={handleSendMessage} isLoading={isLoading} />
-          </div>
+          <ChatInput onSend={handleSendMessage} isLoading={isLoading} />
         </div>
       </div>
     </div>
