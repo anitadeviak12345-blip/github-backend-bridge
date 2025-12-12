@@ -182,9 +182,9 @@ const Chat = () => {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 lg:px-8">
+        <div className="flex-1 overflow-y-auto">
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center py-12">
+            <div className="h-full flex flex-col items-center justify-center text-center py-12 px-4">
               <div className="w-24 h-24 rounded-full gradient-primary mb-4 ring-4 ring-primary/20 flex items-center justify-center">
                 <Brain className="w-12 h-12 text-primary-foreground" />
               </div>
@@ -208,7 +208,7 @@ const Chat = () => {
               </div>
             </div>
           ) : (
-            <div className="w-full py-4">
+            <div className="w-full py-4 px-4 lg:px-6">
               {messages.map((message) => (
                 <ChatMessage
                   key={message.id}
@@ -219,12 +219,12 @@ const Chat = () => {
               ))}
               {isLoading && messages[messages.length - 1]?.role === "user" && (
                 <div className="flex gap-3 py-4">
-                  <div className="w-8 h-8 rounded-full gradient-primary flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-full gradient-primary flex items-center justify-center flex-shrink-0">
                     <Brain className="w-4 h-4 text-primary-foreground" />
                   </div>
-                  <div className="flex flex-col gap-1">
+                  <div className="flex flex-col gap-1 flex-1 min-w-0">
                     <span className="text-xs font-medium text-primary ml-1">Luvio AI</span>
-                    <div className="bg-card border border-border rounded-2xl px-4 py-3">
+                    <div className="bg-card border border-border rounded-2xl px-4 py-3 w-fit">
                       <div className="flex gap-1">
                         <span className="w-2 h-2 bg-primary/50 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
                         <span className="w-2 h-2 bg-primary/50 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />

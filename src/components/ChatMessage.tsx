@@ -25,16 +25,16 @@ const ChatMessage = ({ role, content, attachments }: ChatMessageProps) => {
           <Brain className="w-4 h-4 text-primary-foreground" />
         </div>
       )}
-      <div className="flex flex-col gap-1">
+      <div className={cn("flex flex-col gap-1", !isUser && "flex-1 min-w-0")}>
         {!isUser && (
           <span className="text-xs font-medium text-primary ml-1">Luvio AI</span>
         )}
         <div
           className={cn(
-            "max-w-[80%] rounded-2xl px-4 py-3",
+            "rounded-2xl px-4 py-3",
             isUser
-              ? "bg-primary text-primary-foreground"
-              : "bg-card border border-border"
+              ? "max-w-[80%] bg-primary text-primary-foreground"
+              : "bg-card border border-border w-full"
           )}
         >
           {attachments && attachments.length > 0 && (
